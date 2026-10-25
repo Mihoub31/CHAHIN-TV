@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b2a36">
+<link rel="manifest" href="manifest-tv.webmanifest"><link rel="icon" href="icon.svg">
+<title>CHAHIN TV (TV)</title>
+<style>
+:root{--bg:#0b2a36;--bg2:#103f50;--card:#14485a;--line:#1f5d72;--acc:#35b6d8;--tx:#eaf6fa;--mu:#8fb5c3}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:linear-gradient(180deg,var(--bg),var(--bg2));color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-top:env(safe-area-inset-top)}
+header{padding:16px 16px 8px;display:flex;align-items:center;gap:10px}
+.logo{font-weight:800;font-size:22px;letter-spacing:.5px}.logo span{color:var(--acc)}
+.field{display:flex;gap:8px;padding:0 16px 8px}
+input,select{background:var(--card);border:1px solid var(--line);color:var(--tx);border-radius:14px;padding:12px 14px;font:inherit;min-width:0}
+input{flex:1}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 16px 12px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--line);background:transparent;color:var(--mu);padding:8px 14px;border-radius:999px;font:inherit}
+.chip.on{background:var(--acc);color:#05222c;border-color:var(--acc);font-weight:600}
+main{padding:0 16px 96px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.ch{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;text-align:left;color:inherit;font:inherit;position:relative}
+.ch .lg{height:64px;display:grid;place-items:center;margin-bottom:8px;background:#0b2a36;border-radius:12px;overflow:hidden}
+.ch img{max-width:80%;max-height:52px;object-fit:contain}
+.ch .nm{font-size:14px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ch .ct{font-size:12px;color:var(--mu)}
+.fav{position:absolute;top:8px;right:8px;background:none;border:0;color:var(--mu);font-size:20px;line-height:1}
+.fav.on{color:#ff6b9a}
+.msg{color:var(--mu);text-align:center;padding:40px 0}
+.more{display:block;margin:16px auto;background:var(--acc);color:#05222c;border:0;border-radius:999px;padding:12px 24px;font:inherit;font-weight:700}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#0a2230;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;color:var(--mu);padding:14px;font:inherit}
+nav button.on{color:var(--acc);font-weight:700}
+#pl{position:fixed;inset:0;background:#06161d;display:none;flex-direction:column;z-index:5;padding-top:env(safe-area-inset-top)}
+#pl.open{display:flex}
+#pl .bar{display:flex;align-items:center;gap:12px;padding:12px 16px}
+#pl .bar button{background:var(--card);border:0;color:var(--tx);border-radius:12px;padding:10px 14px;font:inherit}
+#pl .bar b{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+video{width:100%;background:#000;max-height:60vh}
+#pe{color:#ffb4a8;padding:16px;display:none}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+html{font-size:22px}
+main{padding:0 48px 96px}header,.field,.chips{padding-left:48px;padding-right:48px}
+.grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:20px}
+.fav{display:none}
+.ch:focus,.chip:focus,nav button:focus,select:focus,input:focus,.more:focus,#pl .bar button:focus{outline:4px solid #fff;outline-offset:3px;transform:scale(1.04)}
+.ch,.chip{transition:transform .12s}
+#pl video{max-height:75vh;flex:1}
+</style></head><body>
+<header><div class="logo">CHAHIN <span>TV</span></div></header>
+<div class="field"><input id="q" type="search" placeholder="Rechercher une chaîne"><select id="co"><option value="">Tous les pays</option></select></div>
+<div class="chips" id="cats"></div>
+<main><div id="list" class="grid"></div><div id="st" class="msg">Chargement des chaînes…</div><button id="mo" class="more" hidden>Voir plus</button></main>
+<nav><button id="n1" class="on">Chaînes</button><button id="n2">Favoris</button></nav>
+<div id="pl"><div class="bar"><button id="cl">Retour</button><button id="pf">♡ Favori</button><b id="pt"></b></div><video id="v" controls autoplay playsinline></video><div id="pe">Cette chaîne ne répond pas. Essaie une autre chaîne.</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
+<script>
+const API='https://iptv-org.github.io/api/';
+const $=s=>document.querySelector(s);
+let chs=[],cat='',favOnly=false,page=1,hls;
+let favs=[];try{favs=JSON.parse(localStorage.getItem('ctv-fav')||'[]')}catch(e){}
+const saveFav=()=>{try{localStorage.setItem('ctv-fav',JSON.stringify(favs))}catch(e){}};
+const CATS={news:'Actualités',sports:'Sport',movies:'Films',series:'Séries',kids:'Enfants',music:'Musique',documentary:'Documentaires',entertainment:'Divertissement',general:'Général',religious:'Religion'};
+async function load(){
+ try{
+  const [c,s,l,k]=await Promise.all(['channels','streams','logos','countries'].map(n=>fetch(API+n+'.json').then(r=>r.json())));
+  const url={};s.forEach(x=>{if(x.channel&&!url[x.channel])url[x.channel]=x.url});
+  const lg={};l.forEach(x=>{if(!lg[x.channel])lg[x.channel]=x.url});
+  chs=c.filter(x=>url[x.id]&&!x.closed).map(x=>({id:x.id,name:x.name,country:x.country,cats:x.categories||[],url:url[x.id],logo:lg[x.id]}));
+  const have=new Set(chs.map(x=>x.country));
+  k.filter(x=>have.has(x.code)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=(x.flag||'')+' '+x.name;$('#co').appendChild(o)});
+  $('#cats').innerHTML=['',...Object.keys(CATS)].map(id=>`<button class="chip${id===''?' on':''}" data-c="${id}">${id?CATS[id]:'Tout'}</button>`).join('');
+  render();
+ }catch(e){$('#st').textContent='Impossible de charger les chaînes. Vérifie ta connexion.'}
+}
+function filtered(){
+ const q=$('#q').value.trim().toLowerCase(),co=$('#co').value;
+ return chs.filter(x=>(!favOnly||favs.includes(x.id))&&(!cat||x.cats.includes(cat))&&(!co||x.country===co)&&(!q||x.name.toLowerCase().includes(q)));
+}
+function render(){
+ const a=filtered(),n=page*60;
+ $('#list').innerHTML=a.slice(0,n).map(x=>`<div class="ch" data-id="${x.id}" role="button" tabindex="0"><div class="lg">${x.logo?`<img loading="lazy" src="${x.logo}" alt="" onerror="this.remove()">`:'📺'}</div><div class="nm">${x.name.replace(/</g,'&lt;')}</div><div class="ct">${x.country}</div><button class="fav${favs.includes(x.id)?' on':''}" data-f="${x.id}" aria-label="Favori">${favs.includes(x.id)?'♥':'♡'}</button></div>`).join('');
+ $('#st').textContent=a.length?'':(favOnly?'Aucun favori. Touche ♡ sur une chaîne pour l’ajouter.':'Aucune chaîne trouvée.');
+ $('#mo').hidden=a.length<=n;
+}
+function play(id){
+ const x=chs.find(c=>c.id===id);if(!x)return;
+ $('#pt').textContent=x.name;$('#pe').style.display='none';$('#pl').classList.add('open');
+ const v=$('#v');if(hls){hls.destroy();hls=null}
+ const fail=()=>{$('#pe').style.display='block'};
+ if(window.Hls&&Hls.isSupported()){hls=new Hls();hls.loadSource(x.url);hls.attachMedia(v);hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)fail()})}
+ else{v.src=x.url;v.onerror=fail}
+ v.play().catch(()=>{});
+}
+$('#cl').onclick=()=>{$('#pl').classList.remove('open');const v=$('#v');v.pause();v.removeAttribute('src');if(hls){hls.destroy();hls=null}};
+$('#list').onclick=e=>{
+ const f=e.target.closest('[data-f]');
+ if(f){const id=f.dataset.f;favs=favs.includes(id)?favs.filter(i=>i!==id):[...favs,id];saveFav();render();return}
+ const c=e.target.closest('[data-id]');if(c)play(c.dataset.id);
+};
+$('#list').onkeydown=e=>{if(e.key==='Enter'&&e.target.dataset.id)play(e.target.dataset.id)};
+$('#cats').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;cat=b.dataset.c;page=1;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c===b));render()};
+$('#q').oninput=()=>{page=1;render()};$('#co').onchange=()=>{page=1;render()};
+$('#mo').onclick=()=>{page++;render()};
+$('#n1').onclick=()=>{favOnly=false;$('#n1').classList.add('on');$('#n2').classList.remove('on');page=1;render()};
+$('#n2').onclick=()=>{favOnly=true;$('#n2').classList.add('on');$('#n1').classList.remove('on');page=1;render()};
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+load();
+
+let cur=null;
+const _play=play;play=function(id){cur=id;history.pushState({p:1},'');_play(id);setTimeout(()=>$('#cl').focus(),50);updFav()};
+function updFav(){$('#pf').textContent=favs.includes(cur)?'♥ Favori':'♡ Favori'}
+$('#pf').onclick=()=>{favs=favs.includes(cur)?favs.filter(i=>i!==cur):[...favs,cur];saveFav();updFav();render()};
+function closeP(){if($('#pl').classList.contains('open'))$('#cl').click()}
+addEventListener('popstate',closeP);
+const _cl=$('#cl').onclick;$('#cl').onclick=()=>{_cl();if(history.state&&history.state.p)history.back()};
+const D={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+document.addEventListener('keydown',e=>{
+ if(e.key==='Escape'||e.key==='GoBack'||(e.key==='Backspace'&&e.target.tagName!=='INPUT')){closeP();return}
+ const d=D[e.key];if(!d)return;
+ const open=$('#pl').classList.contains('open');
+ const a=document.activeElement;
+ if(a&&a.tagName==='INPUT'&&d[0]!==0)return;
+ const q=open?'#cl,#pf':'.ch,.chip,nav button,select,input,#mo:not([hidden])';
+ const els=[...document.querySelectorAll(q)].filter(x=>x.offsetParent);
+ if(!els.length)return;
+ if(!els.includes(a)){e.preventDefault();els[0].focus();return}
+ const r=a.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
+ let best=null,bs=1e9;
+ els.forEach(x=>{if(x===a)return;const b=x.getBoundingClientRect(),dx=b.left+b.width/2-cx,dy=b.top+b.height/2-cy;
+  const al=dx*d[0]+dy*d[1];if(al<=1)return;const pe=Math.abs(dx*d[1])+Math.abs(dy*d[0]);const sc=al+pe*2;if(sc<bs){bs=sc;best=x}});
+ if(best){e.preventDefault();best.focus();best.scrollIntoView({block:'center',inline:'center'})}
+});
+setTimeout(()=>{const f=document.querySelector('.chip');if(f)f.focus()},1500);
+</script></body></html>
+
