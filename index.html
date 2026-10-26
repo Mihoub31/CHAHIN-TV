@@ -45,7 +45,7 @@ video{width:100%;background:#000;max-height:60vh}
 <div class="chips" id="cats"></div>
 <main><div id="list" class="grid"></div><div id="st" class="msg">Chargement des chaînes…</div><button id="mo" class="more" hidden>Voir plus</button></main>
 <nav><button id="n1" class="on">Chaînes</button><button id="n2">Favoris</button></nav>
-<div id="pl"><div class="bar"><button id="cl">Retour</button><b id="pt"></b></div><video id="v" controls autoplay playsinline></video><div id="pe">Cette chaîne ne répond pas. Essaie une autre chaîne.</div></div>
+<div id="pl"><div class="bar"><button id="cl">Retour</button><b id="pt"></b></div><video id="v" controls autoplay playsinline></video><div id="pe">Aucune source ne fonctionne pour cette chaîne. Essaie-en une autre.</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
 <script>
 const API='https://iptv-org.github.io/api/';
@@ -57,7 +57,7 @@ const CATS={news:'Actualités',sports:'Sport',movies:'Films',series:'Séries',ki
 async function load(){
  try{
   const [c,s,l,k]=await Promise.all(['channels','streams','logos','countries'].map(n=>fetch(API+n+'.json').then(r=>r.json())));
-  const url={};s.forEach(x=>{if(x.channel&&!url[x.channel])url[x.channel]=x.url});
+  const url={};s.forEach(x=>{if(x.channel&&/^https:/i.test(x.url||'')){(url[x.channel]=url[x.channel]||[]).push(x.url)}});
   const lg={};l.forEach(x=>{if(!lg[x.channel])lg[x.channel]=x.url});
   chs=c.filter(x=>url[x.id]&&!x.closed).map(x=>({id:x.id,name:x.name,country:x.country,cats:x.categories||[],url:url[x.id],logo:lg[x.id]}));
   const have=new Set(chs.map(x=>x.country));
@@ -76,16 +76,28 @@ function render(){
  $('#st').textContent=a.length?'':(favOnly?'Aucun favori. Touche ♡ sur une chaîne pour l’ajouter.':'Aucune chaîne trouvée.');
  $('#mo').hidden=a.length<=n;
 }
+function tryUrls(list,i,tok){
+ const v=$('#v');if(hls){hls.destroy();hls=null}
+ if(tok!==cur_tok)return;
+ if(i>=list.length){$('#pe').style.display='block';return}
+ const u=list[i];let done=false,t;
+ const next=()=>{if(done||tok!==cur_tok)return;done=true;clearTimeout(t);tryUrls(list,i+1,tok)};
+ const native=()=>{if(hls){hls.destroy();hls=null}v.onerror=next;v.src=u;v.load();v.play().catch(()=>{})};
+ t=setTimeout(next,12000);
+ v.onplaying=()=>{done=true;clearTimeout(t)};
+ if(window.Hls&&Hls.isSupported()){
+  hls=new Hls();hls.loadSource(u);hls.attachMedia(v);
+  hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal&&!done){native()}});
+  v.play().catch(()=>{});
+ }else native();
+}
+let cur_tok=0;
 function play(id){
  const x=chs.find(c=>c.id===id);if(!x)return;
  $('#pt').textContent=x.name;$('#pe').style.display='none';$('#pl').classList.add('open');
- const v=$('#v');if(hls){hls.destroy();hls=null}
- const fail=()=>{$('#pe').style.display='block'};
- if(window.Hls&&Hls.isSupported()){hls=new Hls();hls.loadSource(x.url);hls.attachMedia(v);hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)fail()})}
- else{v.src=x.url;v.onerror=fail}
- v.play().catch(()=>{});
+ tryUrls(x.url,0,++cur_tok);
 }
-$('#cl').onclick=()=>{$('#pl').classList.remove('open');const v=$('#v');v.pause();v.removeAttribute('src');if(hls){hls.destroy();hls=null}};
+$('#cl').onclick=()=>{cur_tok++;$('#pl').classList.remove('open');const v=$('#v');v.pause();v.removeAttribute('src');if(hls){hls.destroy();hls=null}};
 $('#list').onclick=e=>{
  const f=e.target.closest('[data-f]');
  if(f){const id=f.dataset.f;favs=favs.includes(id)?favs.filter(i=>i!==id):[...favs,id];saveFav();render();return}
