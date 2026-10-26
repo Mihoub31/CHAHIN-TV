@@ -57,9 +57,11 @@ const CATS={news:'Actualités',sports:'Sport',movies:'Films',series:'Séries',ki
 async function load(){
  try{
   const [c,s,l,k]=await Promise.all(['channels','streams','logos','countries'].map(n=>fetch(API+n+'.json').then(r=>r.json())));
-  const url={};s.forEach(x=>{if(x.channel&&/^https:/i.test(x.url||'')){(url[x.channel]=url[x.channel]||[]).push(x.url)}});
+  const named=new Set(c.map(x=>x.id)),url={},extra=[];
+  s.forEach(x=>{if(!x.url)return;const id=x.channel;if(id&&named.has(id)){(url[id]=url[id]||[]).push(x.url)}else{extra.push({id:'s'+extra.length,name:(x.title||x.url.split('/')[2]||'Chaîne').trim(),country:'',cats:[],url:[x.url],logo:null})}});
+  Object.values(url).forEach(a=>a.sort((p,q)=>(/^https:/i.test(q)?1:0)-(/^https:/i.test(p)?1:0)));
   const lg={};l.forEach(x=>{if(!lg[x.channel])lg[x.channel]=x.url});
-  chs=c.filter(x=>url[x.id]&&!x.closed).map(x=>({id:x.id,name:x.name,country:x.country,cats:x.categories||[],url:url[x.id],logo:lg[x.id]}));
+  chs=c.filter(x=>url[x.id]&&!x.closed).map(x=>({id:x.id,name:x.name,country:x.country,cats:x.categories||[],url:url[x.id],logo:lg[x.id]})).concat(extra);
   const have=new Set(chs.map(x=>x.country));
   k.filter(x=>have.has(x.code)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=(x.flag||'')+' '+x.name;$('#co').appendChild(o)});
   $('#cats').innerHTML=['',...Object.keys(CATS)].map(id=>`<button class="chip${id===''?' on':''}" data-c="${id}">${id?CATS[id]:'Tout'}</button>`).join('');
