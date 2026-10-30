@@ -50,7 +50,7 @@
   }
 })();
 </script>
-<link rel="stylesheet" href="assets/app.css?v=2.2.0">
+<link rel="stylesheet" href="assets/app.css?v=2.2.2">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false">
@@ -67,6 +67,7 @@
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></symbol>
+  <symbol id="i-radio" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="m5 7 13-4M7 11h.01M11 11h.01M15 11h.01M7 15h10"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
   <symbol id="i-tv" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 21h6"/></symbol>
@@ -86,7 +87,9 @@
       <button class="rail-btn focusable" id="railSearch" type="button"><svg class="ic"><use href="#i-search"/></svg><span data-i18n="nav.search">Rechercher</span></button>
       <button class="rail-btn focusable" data-view="home" type="button"><svg class="ic"><use href="#i-home"/></svg><span data-i18n="nav.home">Accueil</span></button>
       <button class="rail-btn focusable" data-view="channels" type="button"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="nav.channels">Chaînes</span></button>
+      <button class="rail-btn focusable" data-view="radio" type="button"><svg class="ic"><use href="#i-radio"/></svg><span data-i18n="nav.radio">Radio</span></button>
       <button class="rail-btn focusable" data-view="favorites" type="button"><svg class="ic"><use href="#i-heart"/></svg><span data-i18n="nav.favorites">Favoris</span></button>
+      <button class="rail-btn focusable" data-view="history" type="button"><svg class="ic"><use href="#i-clock"/></svg><span data-i18n="nav.history">Historique</span></button>
       <button class="rail-btn focusable" data-view="settings" type="button"><svg class="ic"><use href="#i-settings"/></svg><span data-i18n="nav.settings">Réglages</span></button>
     </nav>
     <div class="rail-foot"><span id="railVersion">CHAHIN TV v2.2</span><br><span data-i18n="brand.tagline">Lecteur IPTV</span></div>
@@ -98,6 +101,13 @@
         <span class="brand-mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg></span>
         <span>CHAHIN <em>TV</em></span>
       </a>
+      <nav class="top-nav" aria-label="Navigation principale" data-i18n-aria="nav.main">
+        <button class="top-nav-btn focusable" data-view="home" type="button" data-i18n="nav.home">Accueil</button>
+        <button class="top-nav-btn focusable" data-view="channels" type="button" data-i18n="nav.channels">Chaînes</button>
+        <button class="top-nav-btn focusable" data-view="radio" type="button" data-i18n="nav.radio">Radio</button>
+        <button class="top-nav-btn focusable" data-view="favorites" type="button" data-i18n="nav.favorites">Favoris</button>
+        <button class="top-nav-btn focusable" data-view="history" type="button" data-i18n="nav.history">Historique</button>
+      </nav>
       <div class="top-actions">
         <button class="icon-btn focusable" id="searchBtn" type="button" data-i18n-aria="aria.search" aria-label="Rechercher"><svg class="ic"><use href="#i-search"/></svg></button>
         <button class="icon-btn focusable" id="settingsBtn" type="button" data-i18n-aria="aria.settings" aria-label="Réglages"><svg class="ic"><use href="#i-settings"/></svg></button>
@@ -126,6 +136,8 @@
           <div class="block-head"><h2 data-i18n="home.explore">Explorer</h2><span class="muted" id="catalogCount"></span></div>
           <div class="chips" id="homeCats"></div>
         </section>
+
+        <div id="categoryShelves"></div>
 
         <section class="block">
           <div class="block-head">
@@ -166,6 +178,30 @@
           <p data-i18n="channels.emptyBody">Essayez un autre nom, un autre pays ou une autre catégorie.</p>
         </div>
         <div style="text-align:center;margin-top:18px"><button class="btn ghost focusable" id="chMore" type="button" hidden data-i18n="common.more">Afficher plus</button></div>
+      </section>
+
+      <section class="view" data-view="radio" id="view-radio" hidden>
+        <div class="page-head"><h1 data-i18n="nav.radio">Radio</h1><span class="muted" id="radioCount"></span></div>
+        <div class="filters">
+          <label class="search-field">
+            <svg class="ic"><use href="#i-search"/></svg>
+            <input id="radioSearch" type="search" placeholder="Rechercher une station…" data-i18n-ph="radio.searchPh" autocomplete="off" enterkeyhint="search">
+          </label>
+        </div>
+        <div class="chips radio-tags" id="radioTags" style="margin-top:10px"></div>
+        <div class="banner" id="radioError" hidden>
+          <svg class="ic"><use href="#i-alert"/></svg>
+          <span id="radioErrorText" data-i18n="radio.error">Impossible de charger les stations radio.</span>
+          <button class="btn small ghost focusable" id="radioRetry" type="button" data-i18n="common.retry">Réessayer</button>
+        </div>
+        <p class="muted small" id="radioLoading" hidden data-i18n="common.loading">Chargement…</p>
+        <div class="grid" id="radioGrid"></div>
+        <div class="empty" id="radioEmpty" hidden>
+          <span class="big"><svg class="ic"><use href="#i-radio"/></svg></span>
+          <h3 data-i18n="radio.emptyTitle">Aucune station trouvée</h3>
+          <p data-i18n="radio.emptyBody">Essayez une autre recherche ou une autre catégorie.</p>
+        </div>
+        <div style="text-align:center;margin-top:18px"><button class="btn ghost focusable" id="radioMore" type="button" hidden data-i18n="common.more">Afficher plus</button></div>
       </section>
 
       <section class="view" data-view="favorites" id="view-favorites" hidden>
@@ -335,6 +371,9 @@
             <a class="row-btn focusable" href="https://github.com/iptv-org/iptv" target="_blank" rel="noopener">
               <svg class="ic"><use href="#i-tv"/></svg><span data-i18n="settings.catalogLink">Catalogue public iptv-org</span>
             </a>
+            <a class="row-btn focusable" href="https://www.radio-browser.info/" target="_blank" rel="noopener">
+              <svg class="ic"><use href="#i-radio"/></svg><span data-i18n="settings.radioCatalogLink">Annuaire radio public Radio Browser</span>
+            </a>
           </div>
           <p class="fine" style="margin-top:14px" data-i18n="settings.legal">Cette application ne diffuse aucun flux et n'héberge aucun contenu.</p>
         </section>
@@ -344,6 +383,7 @@
     <nav class="tabbar" aria-label="Navigation" data-i18n-aria="nav.tabs">
       <button class="focusable" data-view="home" type="button"><svg class="ic"><use href="#i-home"/></svg><span data-i18n="nav.home">Accueil</span></button>
       <button class="focusable" data-view="channels" type="button"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="nav.channels">Chaînes</span></button>
+      <button class="focusable" data-view="radio" type="button"><svg class="ic"><use href="#i-radio"/></svg><span data-i18n="nav.radio">Radio</span></button>
       <button class="focusable" data-view="favorites" type="button"><svg class="ic"><use href="#i-heart"/></svg><span data-i18n="nav.favorites">Favoris</span></button>
       <button class="focusable" data-view="settings" type="button"><svg class="ic"><use href="#i-settings"/></svg><span data-i18n="nav.settings">Réglages</span></button>
     </nav>
@@ -433,6 +473,7 @@
 
 <div class="player" id="player" hidden>
   <video id="video" playsinline></video>
+  <div class="radio-cover" id="radioCover" aria-hidden="true"><img id="radioCoverImage" alt=""><span id="radioCoverName"></span></div>
   <div class="p-loading" id="pLoading"><span class="spinner"></span></div>
   <div class="p-error" id="pError" hidden>
     <span class="big"><svg class="ic"><use href="#i-alert"/></svg></span>
@@ -488,8 +529,8 @@
 <div class="night-veil" id="nightVeil" aria-hidden="true"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="assets/i18n.js?v=2.2.0"></script>
+<script src="assets/i18n.js?v=2.2.2"></script>
 <script src="assets/vendor/hls.min.js"></script>
-<script src="assets/app.js?v=2.2.0"></script>
+<script src="assets/app.js?v=2.2.2"></script>
 </body>
 </html>
