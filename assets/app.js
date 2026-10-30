@@ -3,7 +3,10 @@
 
   const API = 'https://iptv-org.github.io/api/';
   const RADIO_API = 'https://de1.api.radio-browser.info/json/';
-  const VERSION = '2.2';
+  const FREE_TV_M3U = 'https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8';
+  const TMDB_API = 'https://api.themoviedb.org/3/';
+  const TMDB_IMAGE = 'https://image.tmdb.org/t/p/w342';
+  const VERSION = '2.3';
   const PAGE = 36;
   const RADIO_PAGE = 36;
   const LS = { favs: 'ctv:favs', history: 'ctv:history', playlists: 'ctv:playlists', prefs: 'ctv:prefs', radioStations: 'ctv:radioStations' };
@@ -47,7 +50,8 @@
       motion: true,
       contrast: 'normal'
     },
-    content: { audio: 'auto', subtitles: 'off', metadata: 'auto', channelLangs: [] }
+    content: { audio: 'auto', subtitles: 'off', metadata: 'auto', channelLangs: [] },
+    media: { tmdbApiKey: '' }
   };
 
   const $ = (s, r = document) => r.querySelector(s);
@@ -103,6 +107,8 @@
     prefs.theme.lat = prefs.theme.lat == null ? null : Number(prefs.theme.lat);
     prefs.theme.lon = prefs.theme.lon == null ? null : Number(prefs.theme.lon);
     if (!Array.isArray(prefs.content.channelLangs)) prefs.content.channelLangs = [];
+    if (!prefs.media || typeof prefs.media !== 'object') prefs.media = {};
+    prefs.media.tmdbApiKey = typeof prefs.media.tmdbApiKey === 'string' ? prefs.media.tmdbApiKey.trim() : '';
     return prefs;
   }
   const prefs = loadPrefs();
@@ -144,10 +150,17 @@
     tv: document.documentElement.getAttribute('data-tv') === '1',
     builtin: [], playlistChannels: [], all: [], byId: new Map(),
     countries: new Map(), cats: [], langs: [],
+    catalogSourceError: '',
     radioItems: [], radioStations: new Map(), radioTags: [],
     radioTag: '', radioQuery: '', radioOffset: 0, radioHasMore: true,
     radioLoaded: false, radioLoading: false, radioTagsLoaded: false,
     radioError: '', radioTagsError: '',
+    mediaKind: 'movies', mediaQuery: '',
+    mediaItems: { movies: [], series: [], anime: [] },
+    mediaPage: { movies: 1, series: 1, anime: 1 },
+    mediaTotalPages: { movies: 1, series: 1, anime: 1 },
+    mediaLoaded: { movies: false, series: false, anime: false },
+    mediaLoading: false, mediaError: '',
     playlists: [], favs: new Set(), history: [],
     view: 'home', cat: '', country: '', query: '', limit: PAGE,
     loading: true, loadingCatalog: false, updatedAt: 0,
@@ -165,6 +178,8 @@
   let radioAbort = null;
   let radioRequestQueue = Promise.resolve();
   let radioLastRequestAt = 0;
+  let mediaAbort = null;
+  let mediaRequestToken = 0;
 
   const video = $('#video');
 
@@ -694,9 +709,17 @@
   }
 
   async function loadBuiltin() {
+    const freeTvPromise = fetchPlaylistText(FREE_TV_M3U)
+      .then(text => parseM3U(text, { id: 'free-tv', name: 'Free TV/IPTV' }))
+      .catch(error => {
+        state.catalogSourceError = error.message || 'network';
+        console.warn('Free TV/IPTV catalog unavailable', error);
+        return [];
+      });
     const [channels, streams, logos, countries] = await Promise.all(
       ['channels', 'streams', 'logos', 'countries'].map(fetchJSON)
     );
+    const freeTvChannels = await freeTvPromise;
 
     const countryMap = new Map(countries.map(c => [c.code, { name: c.name || c.code, flag: c.flag || '' }]));
     const urlsByChannel = new Map();
@@ -759,9 +782,10 @@
     }
 
     list.sort((a, b) => a.name.localeCompare(b.name, window.I18N.locale(), { sensitivity: 'base' }));
+    freeTvChannels.sort((a, b) => a.name.localeCompare(b.name, window.I18N.locale(), { sensitivity: 'base' }));
 
     state.countries = countryMap;
-    state.builtin = list;
+    state.builtin = [...list, ...freeTvChannels];
   }
 
   async function fetchPlaylistText(rawUrl) {
@@ -1201,6 +1225,176 @@
     writeJSON(LS.radioStations, [...saved, ...recent]);
   }
 
+  function mediaRegion() {
+    if (/^[A-Z]{2}$/.test(prefs.region)) return prefs.region;
+    const localeRegion = (navigator.language || '').split('-')[1];
+    return /^[A-Za-z]{2}$/.test(localeRegion || '') ? localeRegion.toUpperCase() : 'US';
+  }
+
+  function mediaLocale() {
+    const lang = uiLang();
+    return lang === 'ar' ? 'ar-SA' : lang === 'en' ? 'en-US' : 'fr-FR';
+  }
+
+  function mediaApiUrl(path, params) {
+    const url = new URL(path, TMDB_API);
+    url.searchParams.set('api_key', prefs.media.tmdbApiKey);
+    url.searchParams.set('language', mediaLocale());
+    url.searchParams.set('region', mediaRegion());
+    Object.keys(params || {}).forEach(key => url.searchParams.set(key, String(params[key])));
+    return url.href;
+  }
+
+  async function fetchMediaJSON(url, signal) {
+    try {
+      const response = await fetch(url, { signal, cache: 'no-store', headers: { Accept: 'application/json' } });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const body = await response.json();
+          detail = body.status_message || '';
+        } catch (e) { /* response may not be JSON */ }
+        const error = new Error(response.status === 401 ? t('media.invalidKey') : detail || 'HTTP ' + response.status);
+        error.httpStatus = response.status;
+        throw error;
+      }
+      return await response.json();
+    } catch (error) {
+      if (error.httpStatus) throw error;
+      if ((signal && signal.aborted) || !window.ChahinNative || typeof window.ChahinNative.fetchText !== 'function') throw error;
+      const text = window.ChahinNative.fetchText(url);
+      if (typeof text !== 'string' || text.startsWith('ERR:')) {
+        throw new Error(typeof text === 'string' ? text.slice(4) : t('error.downloadBlocked'));
+      }
+      try { return JSON.parse(text); }
+      catch (parseError) { throw new Error('Invalid TMDB response'); }
+    }
+  }
+
+  function mediaRequests(kind, page) {
+    const query = state.mediaQuery.trim();
+    if (kind === 'movies') {
+      return [mediaApiUrl(query ? 'search/movie' : 'discover/movie', query
+        ? { query, page, include_adult: false }
+        : { page, sort_by: 'popularity.desc', include_adult: false })];
+    }
+    if (kind === 'series') {
+      return [mediaApiUrl(query ? 'search/tv' : 'discover/tv', query
+        ? { query, page, include_adult: false }
+        : { page, sort_by: 'popularity.desc', include_adult: false })];
+    }
+    if (query) {
+      const search = { query, page, include_adult: false };
+      return [mediaApiUrl('search/movie', search), mediaApiUrl('search/tv', search)];
+    }
+    return [
+      mediaApiUrl('discover/movie', { page, sort_by: 'popularity.desc', include_adult: false, with_genres: 16, with_original_language: 'ja' }),
+      mediaApiUrl('discover/tv', { page, sort_by: 'popularity.desc', include_adult: false, with_genres: 16, with_original_language: 'ja', with_origin_country: 'JP' })
+    ];
+  }
+
+  function isAnimeResult(item) {
+    return item && ['movie', 'tv'].includes(item.media_type || (item.title ? 'movie' : 'tv')) &&
+      item.original_language === 'ja' && Array.isArray(item.genre_ids) && item.genre_ids.includes(16);
+  }
+
+  function renderMediaCard(item) {
+    const type = item.media_type || (item.title ? 'movie' : 'tv');
+    const id = Number(item.id);
+    if (!Number.isInteger(id) || id < 1 || !['movie', 'tv'].includes(type)) return '';
+    const title = String(item.title || item.name || t('media.untitled')).trim();
+    const date = String(item.release_date || item.first_air_date || '').slice(0, 4);
+    const rating = Number(item.vote_average);
+    const posterPath = typeof item.poster_path === 'string' && /^\/[a-zA-Z0-9/_-]+\.(jpg|jpeg|png)$/i.test(item.poster_path)
+      ? TMDB_IMAGE + item.poster_path
+      : '';
+    const watchPath = type === 'movie' ? 'movie' : 'tv';
+    const watchUrl = `https://www.themoviedb.org/${watchPath}/${id}/watch?locale=${encodeURIComponent(mediaRegion())}`;
+    return `<article class="media-card">
+      <a class="media-poster" href="${watchUrl}" target="_blank" rel="noopener" aria-label="${esc(t('media.watchOptionsFor', { title }))}">
+        ${posterPath ? `<img src="${esc(posterPath)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : `<span class="ph">${esc(initials(title))}</span>`}
+      </a>
+      <div class="media-info">
+        <b class="media-title">${esc(title)}</b>
+        <small class="media-meta">${esc([date, rating > 0 ? '★ ' + rating.toFixed(1) : ''].filter(Boolean).join(' · ') || t('media.noDetails'))}</small>
+        <a class="btn small ghost focusable" href="${watchUrl}" target="_blank" rel="noopener">${esc(t('media.watchOptions'))}</a>
+      </div>
+    </article>`;
+  }
+
+  function renderMedia() {
+    const items = state.mediaItems[state.mediaKind];
+    const hasKey = !!prefs.media.tmdbApiKey;
+    $('#mediaSetup').hidden = hasKey;
+    $('#mediaSearch').disabled = !hasKey;
+    $('#mediaKinds').querySelectorAll('[data-media-kind]').forEach(button => {
+      const active = button.dataset.mediaKind === state.mediaKind;
+      button.classList.toggle('on', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    $('#mediaGrid').innerHTML = items.map(renderMediaCard).join('');
+    $('#mediaCount').textContent = items.length ? tn('media.loaded', items.length) : '';
+    $('#mediaLoading').hidden = !state.mediaLoading;
+    $('#mediaEmpty').hidden = !hasKey || state.mediaLoading || !!state.mediaError || items.length > 0;
+    $('#mediaError').hidden = !state.mediaError;
+    $('#mediaErrorText').textContent = state.mediaError || t('media.error');
+    $('#mediaMore').hidden = !hasKey || state.mediaLoading || !items.length ||
+      state.mediaPage[state.mediaKind] > state.mediaTotalPages[state.mediaKind];
+  }
+
+  async function loadMediaPage(reset) {
+    const kind = state.mediaKind;
+    if (reset) {
+      if (mediaAbort) mediaAbort.abort();
+      mediaRequestToken++;
+      state.mediaItems[kind] = [];
+      state.mediaPage[kind] = 1;
+      state.mediaTotalPages[kind] = 1;
+      state.mediaLoaded[kind] = false;
+      state.mediaError = '';
+      state.mediaLoading = false;
+    }
+    if (!prefs.media.tmdbApiKey || state.mediaLoading ||
+      (state.mediaLoaded[kind] && state.mediaPage[kind] > state.mediaTotalPages[kind])) {
+      renderMedia();
+      return;
+    }
+
+    mediaAbort = new AbortController();
+    const token = ++mediaRequestToken;
+    const signal = mediaAbort.signal;
+    const page = state.mediaPage[kind];
+    state.mediaLoading = true;
+    state.mediaError = '';
+    renderMedia();
+    try {
+      const responses = await Promise.all(mediaRequests(kind, page).map(url => fetchMediaJSON(url, signal)));
+      if (token !== mediaRequestToken) return;
+      let results = responses.flatMap(response => Array.isArray(response.results) ? response.results : []);
+      if (kind === 'anime') results = results.filter(isAnimeResult);
+      const seen = new Set(state.mediaItems[kind].map(item => item.media_type + ':' + item.id));
+      for (const item of results) {
+        const type = item.media_type || (item.title ? 'movie' : 'tv');
+        const key = type + ':' + item.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        state.mediaItems[kind].push(Object.assign({}, item, { media_type: type }));
+      }
+      state.mediaTotalPages[kind] = Math.max(1, ...responses.map(response => Number(response.total_pages) || 1));
+      state.mediaPage[kind] = page + 1;
+      state.mediaLoaded[kind] = true;
+    } catch (error) {
+      if (token !== mediaRequestToken) return;
+      state.mediaError = error.message || t('media.error');
+      console.error('Media catalog unavailable', error);
+    } finally {
+      if (token === mediaRequestToken) {
+        state.mediaLoading = false;
+        renderMedia();
+      }
+    }
+  }
+
   function renderPlaylists() {
     const wrap = $('#playlistList');
     if (!state.playlists.length) {
@@ -1222,6 +1416,7 @@
 
   function renderSettings() {
     renderPlaylists();
+    $('#tmdbApiKey').value = prefs.media.tmdbApiKey;
     $('#favCountSettings').textContent = nf(state.favs.size);
     $('#historyCountSettings').textContent = nf(state.history.length);
     $('#verLabel').textContent = t('common.version', { v: VERSION });
@@ -1238,6 +1433,10 @@
         loadRadioTags();
         loadRadioPage(false);
       }
+    }
+    else if (state.view === 'media') {
+      renderMedia();
+      if (prefs.media.tmdbApiKey && !state.mediaLoaded[state.mediaKind] && !state.mediaLoading) loadMediaPage(false);
     }
     else if (state.view === 'favorites') renderFavorites();
     else if (state.view === 'history') renderHistoryView();
@@ -1257,7 +1456,7 @@
   }
 
   function setView(view) {
-    if (!['home', 'channels', 'radio', 'favorites', 'history', 'settings'].includes(view)) view = 'home';
+    if (!['home', 'channels', 'radio', 'media', 'favorites', 'history', 'settings'].includes(view)) view = 'home';
     state.view = view;
     state.limit = PAGE;
     $$('.view').forEach(el => { el.hidden = el.dataset.view !== view; });
@@ -1762,6 +1961,7 @@
     if (state.loadingCatalog) return;
     state.loadingCatalog = true;
     state.loading = true;
+    state.catalogSourceError = '';
     $('#catalogError').hidden = true;
     let builtinError = null;
     try {
@@ -1781,6 +1981,9 @@
     renderAll();
     if (builtinError) {
       $('#catalogErrorText').textContent = t('error.catalog', { msg: builtinError.message || 'réseau' });
+      $('#catalogError').hidden = false;
+    } else if (state.catalogSourceError) {
+      $('#catalogErrorText').textContent = t('error.extraCatalog', { msg: state.catalogSourceError });
       $('#catalogError').hidden = false;
     }
     if (state.tv && $('#onboardOverlay').hidden) setTimeout(() => { const el = $('.rail-btn.active'); if (el) el.focus(); }, 150);
@@ -1890,6 +2093,47 @@
       loadRadioPage(true);
     });
     $('#radioMore').addEventListener('click', () => loadRadioPage(false));
+    $('#mediaSearch').addEventListener('input', debounce(e => {
+      state.mediaQuery = e.target.value.trim();
+      loadMediaPage(true);
+    }, 350));
+    $('#mediaRetry').addEventListener('click', () => loadMediaPage(true));
+    $('#mediaMore').addEventListener('click', () => loadMediaPage(false));
+    $('#saveTmdbKey').addEventListener('click', () => {
+      const key = $('#tmdbApiKey').value.trim();
+      if (!key) { toast(t('media.keyRequiredToast')); return; }
+      prefs.media.tmdbApiKey = key;
+      savePrefs();
+      state.mediaKind = 'movies';
+      state.mediaQuery = '';
+      $('#mediaSearch').value = '';
+      Object.keys(state.mediaItems).forEach(kind => {
+        state.mediaItems[kind] = [];
+        state.mediaPage[kind] = 1;
+        state.mediaTotalPages[kind] = 1;
+        state.mediaLoaded[kind] = false;
+      });
+      toast(t('media.keySaved'));
+      if (state.view === 'media') loadMediaPage(true);
+      renderSettings();
+    });
+    $('#clearTmdbKey').addEventListener('click', () => {
+      if (mediaAbort) mediaAbort.abort();
+      mediaRequestToken++;
+      prefs.media.tmdbApiKey = '';
+      savePrefs();
+      state.mediaLoading = false;
+      state.mediaError = '';
+      Object.keys(state.mediaItems).forEach(kind => {
+        state.mediaItems[kind] = [];
+        state.mediaPage[kind] = 1;
+        state.mediaTotalPages[kind] = 1;
+        state.mediaLoaded[kind] = false;
+      });
+      renderSettings();
+      renderMedia();
+      toast(t('media.keyCleared'));
+    });
 
     $('#homeMore').addEventListener('click', () => { state.limit += PAGE; renderHome(); });
     $('#chMore').addEventListener('click', () => { state.limit += PAGE; renderChannels(); });
@@ -2071,6 +2315,16 @@
     video.addEventListener('pause', updatePlayerToggle);
 
     document.addEventListener('click', e => {
+      const mediaKind = e.target.closest('[data-media-kind]');
+      if (mediaKind) {
+        e.preventDefault();
+        const kind = mediaKind.dataset.mediaKind;
+        if (kind && kind !== state.mediaKind) {
+          state.mediaKind = kind;
+          loadMediaPage(true);
+        }
+        return;
+      }
       const fav = e.target.closest('[data-fav]');
       if (fav) { e.preventDefault(); e.stopPropagation(); toggleFav(fav.dataset.fav); return; }
 
@@ -2196,7 +2450,8 @@
         if (key === 'ArrowDown') {
           const first = e.target.id === 'searchInput'
             ? $('#searchResults .card')
-            : (e.target.id === 'chSearch' ? $('#chGrid .card') : null);
+            : e.target.id === 'chSearch' ? $('#chGrid .card')
+              : e.target.id === 'mediaSearch' ? $('#mediaGrid .media-poster') : null;
           if (first) { e.preventDefault(); first.focus(); }
         }
         return;
