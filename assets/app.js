@@ -2,9 +2,11 @@
   'use strict';
 
   const API = 'https://iptv-org.github.io/api/';
+  const RADIO_API = 'https://de1.api.radio-browser.info/json/';
   const VERSION = '2.2';
   const PAGE = 36;
-  const LS = { favs: 'ctv:favs', history: 'ctv:history', playlists: 'ctv:playlists', prefs: 'ctv:prefs' };
+  const RADIO_PAGE = 36;
+  const LS = { favs: 'ctv:favs', history: 'ctv:history', playlists: 'ctv:playlists', prefs: 'ctv:prefs', radioStations: 'ctv:radioStations' };
   const DB_NAME = 'chahin-tv';
   const DB_STORE = 'playlists';
   const t = (key, vars) => window.I18N.t(key, vars);
@@ -12,7 +14,7 @@
   const nf = n => window.I18N.number(n);
   const CATS = {
     news: 1, sports: 1, movies: 1, series: 1, kids: 1, music: 1, documentary: 1,
-    entertainment: 1, general: 1, religious: 1, animation: 1, auto: 1, business: 1,
+    entertainment: 1, general: 1, religious: 1, animation: 1, auto: 1, business: 1, radio: 1,
     classic: 1, comedy: 1, cooking: 1, culture: 1, education: 1, family: 1,
     legislative: 1, lifestyle: 1, outdoor: 1, relax: 1, science: 1, shop: 1,
     travel: 1, weather: 1, interactive: 1, public: 1, other: 1
@@ -142,6 +144,10 @@
     tv: document.documentElement.getAttribute('data-tv') === '1',
     builtin: [], playlistChannels: [], all: [], byId: new Map(),
     countries: new Map(), cats: [], langs: [],
+    radioItems: [], radioStations: new Map(), radioTags: [],
+    radioTag: '', radioQuery: '', radioOffset: 0, radioHasMore: true,
+    radioLoaded: false, radioLoading: false, radioTagsLoaded: false,
+    radioError: '', radioTagsError: '',
     playlists: [], favs: new Set(), history: [],
     view: 'home', cat: '', country: '', query: '', limit: PAGE,
     loading: true, loadingCatalog: false, updatedAt: 0,
@@ -155,6 +161,10 @@
   let toastTimer = null;
   let plTab = 'url';
   let searchTimer = null;
+  let radioRequestToken = 0;
+  let radioAbort = null;
+  let radioRequestQueue = Promise.resolve();
+  let radioLastRequestAt = 0;
 
   const video = $('#video');
 
@@ -223,6 +233,7 @@
     if (CATS[key]) return t('cat.' + key);
     if (key === 'g:__other') return t('cat.other');
     if (key.startsWith('g:')) return key.slice(2);
+    if (key.startsWith('rt:')) return key.slice(3);
     return key;
   }
   function countryLabel(c) {
@@ -644,6 +655,8 @@
         const url = safeHttp(line);
         if (url) {
           const group = (current.attrs['group-title'] || '').trim();
+          const isRadio = /\bradio\b/i.test(group) || /^(true|1|yes)$/i.test(current.attrs.radio || '') ||
+            /\b(audio|radio)\b/i.test(current.attrs['tvg-type'] || current.attrs['media-type'] || '');
           const tvgId = current.attrs['tvg-id'] || '';
           const logo = safeHttp(current.attrs['tvg-logo'] || '');
           const cc = (current.attrs['tvg-country'] || '').toUpperCase();
@@ -653,7 +666,8 @@
             name: current.name,
             logo,
             urls: [url],
-            cats: [group ? 'g:' + group : 'g:__other'],
+            type: isRadio ? 'radio' : 'tv',
+            cats: isRadio ? ['radio', group ? 'g:' + group : 'g:__other'] : [group ? 'g:' + group : 'g:__other'],
             country,
             countryName: '',
             langs: normalizeLangList(current.attrs['tvg-language']),
@@ -810,6 +824,7 @@
     }
     state.all = merged;
     state.byId = new Map(merged.map(c => [c.id, c]));
+    state.radioStations.forEach(c => state.byId.set(c.id, c));
 
     for (const c of state.playlistChannels) {
       if (c.country && state.countries.has(c.country)) {
@@ -821,7 +836,10 @@
 
   function categoryList() {
     const keys = new Set();
-    for (const c of state.all) c.cats.forEach(k => keys.add(k));
+    for (const c of state.all) {
+      if (c.type === 'radio') continue;
+      c.cats.forEach(k => keys.add(k));
+    }
     const out = [{ key: '', label: t('common.all') }];
     for (const key of Object.keys(CATS)) {
       if (key === 'other') continue;
@@ -885,7 +903,7 @@
   }
 
   function renderHero() {
-    const pool = state.all.filter(c => c.logo);
+    const pool = state.all.filter(c => c.type !== 'radio' && c.logo);
     if (!pool.length) { $('#hero').innerHTML = ''; return; }
     const day = new Date().toISOString().slice(0, 10);
     const c = pool[hash('hero-' + day) % pool.length];
@@ -914,24 +932,51 @@
     $('#continueRow').innerHTML = items.map(x => continueCardHTML(x.c, x.at)).join('');
   }
 
+  function renderCategoryShelves() {
+    const groups = new Map();
+    for (const c of state.all) {
+      if (c.type === 'radio') continue;
+      for (const key of c.cats) {
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(c);
+      }
+    }
+    $('#categoryShelves').innerHTML = state.cats
+      .filter(cat => cat.key && groups.has(cat.key))
+      .map(cat => {
+        const channels = groups.get(cat.key);
+        return `<section class="block category-shelf">
+          <div class="block-head"><h2>${esc(t('home.category', { category: cat.label }))}</h2>
+            <button class="link-btn focusable" type="button" data-home-category="${esc(cat.key)}">${esc(t('common.seeAll'))}</button>
+          </div>
+          <div class="hscroll category-row" aria-label="${esc(cat.label)}">
+            ${channels.slice(0, 18).map(cardHTML).join('')}
+          </div>
+        </section>`;
+      }).join('');
+  }
+
   function renderHome() {
     renderHero();
     renderContinueRow();
     $('#homeCats').innerHTML = chipsHTML(state.cats, state.cat);
-    const featured = state.all.filter(c => c.logo).slice(0, 12);
+    const channels = state.all.filter(c => c.type !== 'radio');
+    const featured = channels.filter(c => c.logo).slice(0, 12);
     $('#featuredGrid').innerHTML = featured.map(cardHTML).join('');
-    const list = state.all.slice(0, state.limit);
+    renderCategoryShelves();
+    const list = channels.slice(0, state.limit);
     $('#homeGrid').innerHTML = list.map(cardHTML).join('');
-    $('#homeMore').hidden = state.all.length <= state.limit;
-    $('#homeEmpty').hidden = state.loading || state.all.length > 0;
-    $('#catalogCount').textContent = state.all.length ? tn('count.channels', state.all.length) : '';
-    $('#homeTotal').textContent = state.all.length ? t('home.of', { a: nf(list.length), b: nf(state.all.length) }) : '';
+    $('#homeMore').hidden = channels.length <= state.limit;
+    $('#homeEmpty').hidden = state.loading || channels.length > 0;
+    $('#catalogCount').textContent = channels.length ? tn('count.channels', channels.length) : '';
+    $('#homeTotal').textContent = channels.length ? t('home.of', { a: nf(list.length), b: nf(channels.length) }) : '';
   }
 
   function filteredChannels() {
     const q = state.query.trim().toLowerCase();
     const langFilter = prefs.content.channelLangs;
     return state.all.filter(c => {
+      if (c.type === 'radio') return false;
       if (state.cat && !c.cats.includes(state.cat)) return false;
       if (state.country && c.country !== state.country) return false;
       if (langFilter.length) {
@@ -976,6 +1021,186 @@
     $('#historyCount').textContent = list.length ? tn('count.channels', list.length) : '';
   }
 
+  function renderRadioTags() {
+    const allLabel = t('common.all');
+    $('#radioTags').innerHTML = `<button type="button" class="chip focusable${state.radioTag ? '' : ' on'}" data-radio-tag="">${esc(allLabel)}</button>` +
+      state.radioTags.map(tag => `<button type="button" class="chip focusable${tag === state.radioTag ? ' on' : ''}" data-radio-tag="${esc(tag)}">${esc(tag)}</button>`).join('');
+  }
+
+  function renderRadio() {
+    renderRadioTags();
+    const query = state.radioQuery.toLowerCase();
+    const localStations = state.all.filter(c => c.type === 'radio' && c.source !== 'radio-browser')
+      .filter(c => !query || (c.name + ' ' + c.cats.map(catLabel).join(' ')).toLowerCase().includes(query))
+      .filter(c => !state.radioTag || c.cats.some(cat => catLabel(cat).toLowerCase() === state.radioTag.toLowerCase()));
+    const stations = [...localStations, ...state.radioItems];
+    $('#radioGrid').innerHTML = stations.map(cardHTML).join('');
+    $('#radioCount').textContent = stations.length
+      ? tn('radio.loaded', stations.length)
+      : '';
+    $('#radioEmpty').hidden = state.radioLoading || stations.length > 0;
+    $('#radioLoading').hidden = !state.radioLoading;
+    $('#radioMore').hidden = state.radioLoading || !state.radioHasMore || (!state.radioItems.length && !!state.radioError);
+    const error = state.radioError || state.radioTagsError;
+    $('#radioErrorText').textContent = error || t('radio.error');
+    $('#radioError').hidden = !error;
+  }
+
+  async function fetchRadioJSON(path, signal) {
+    const url = RADIO_API + path;
+    let release;
+    const queued = new Promise(resolve => { release = resolve; });
+    const previous = radioRequestQueue;
+    radioRequestQueue = previous.then(() => queued);
+    await previous;
+    try {
+      const delay = Math.max(0, 1000 - (Date.now() - radioLastRequestAt));
+      if (delay) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            if (signal) signal.removeEventListener('abort', abort);
+            resolve();
+          }, delay);
+          const abort = () => {
+            clearTimeout(timer);
+            reject(new Error('Aborted'));
+          };
+          if (signal) {
+            if (signal.aborted) abort();
+            else signal.addEventListener('abort', abort, { once: true });
+          }
+        });
+      }
+      if (signal && signal.aborted) throw new Error('Aborted');
+      radioLastRequestAt = Date.now();
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+        signal
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return await response.json();
+    } catch (error) {
+      if ((signal && signal.aborted) || !window.ChahinNative || typeof window.ChahinNative.fetchText !== 'function') throw error;
+      const text = window.ChahinNative.fetchText(url);
+      if (typeof text !== 'string' || text.startsWith('ERR:')) {
+        throw new Error(typeof text === 'string' ? text.slice(4) : t('error.downloadBlocked'));
+      }
+      try { return JSON.parse(text); }
+      catch (parseError) { throw new Error('Invalid radio directory response'); }
+    } finally {
+      release();
+    }
+  }
+
+  async function loadRadioTags() {
+    if (state.radioTagsLoaded) return;
+    try {
+      const tags = await fetchRadioJSON('tags?hidebroken=true&order=stationcount&reverse=true&limit=50');
+      state.radioTags = Array.isArray(tags)
+        ? tags.map(item => String(item.name || '').trim()).filter(Boolean)
+        : [];
+      state.radioTagsLoaded = true;
+      state.radioTagsError = '';
+    } catch (error) {
+      state.radioTagsError = t('radio.tagsError', { msg: error.message || 'network' });
+      console.error('Radio categories unavailable', error);
+    }
+    if (state.view === 'radio') renderRadio();
+  }
+
+  function radioPath() {
+    const params = new URLSearchParams({
+      hidebroken: 'true',
+      limit: String(RADIO_PAGE),
+      offset: String(state.radioOffset),
+      order: 'clickcount',
+      reverse: 'true'
+    });
+    if (state.radioQuery) params.set('name', state.radioQuery);
+    if (state.radioTag) params.set('tag', state.radioTag);
+    return 'stations/search?' + params.toString();
+  }
+
+  function normalizeRadioStation(station) {
+    const url = safeHttp(station.url_resolved || station.url);
+    const id = String(station.stationuuid || '').trim();
+    if (!url || !id) return null;
+    const country = /^[A-Z]{2}$/.test(String(station.countrycode || '').toUpperCase())
+      ? String(station.countrycode).toUpperCase()
+      : '';
+    const langs = normalizeLangList(station.languagecodes || station.language || '');
+    const tags = String(station.tags || '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 8);
+    return {
+      id: 'radio:' + id,
+      name: String(station.name || '').trim() || t('channel.unnamed'),
+      type: 'radio',
+      logo: safeHttp(station.favicon || ''),
+      urls: [url],
+      cats: ['radio', ...tags.map(tag => 'rt:' + tag)],
+      country,
+      countryName: String(station.country || ''),
+      langs,
+      source: 'radio-browser',
+      sourceName: 'Radio Browser'
+    };
+  }
+
+  async function loadRadioPage(reset) {
+    if (reset) {
+      if (radioAbort) radioAbort.abort();
+      radioRequestToken++;
+      state.radioItems = [];
+      state.radioOffset = 0;
+      state.radioHasMore = true;
+      state.radioError = '';
+      state.radioLoading = false;
+      state.radioLoaded = false;
+    }
+    if (state.radioLoading || !state.radioHasMore) return;
+
+    radioAbort = new AbortController();
+    const token = ++radioRequestToken;
+    const signal = radioAbort.signal;
+    state.radioLoading = true;
+    renderRadio();
+    try {
+      const stations = await fetchRadioJSON(radioPath(), signal);
+      if (token !== radioRequestToken) return;
+      const page = Array.isArray(stations) ? stations : [];
+      const seen = new Set(state.radioItems.map(c => c.id));
+      for (const station of page) {
+        const channel = normalizeRadioStation(station);
+        if (!channel || seen.has(channel.id)) continue;
+        seen.add(channel.id);
+        state.radioItems.push(channel);
+        state.radioStations.set(channel.id, channel);
+        state.byId.set(channel.id, channel);
+      }
+      state.radioOffset += page.length;
+      state.radioHasMore = page.length === RADIO_PAGE;
+      state.radioLoaded = true;
+      persistRadioStations();
+    } catch (error) {
+      if (token !== radioRequestToken) return;
+      state.radioError = t('radio.loadingError', { msg: error.message || 'network' });
+      console.error('Radio stations unavailable', error);
+    } finally {
+      if (token === radioRequestToken) {
+        state.radioLoading = false;
+        renderRadio();
+      }
+    }
+  }
+
+  function persistRadioStations() {
+    const pinned = new Set([...state.favs, ...state.history.map(item => item.id)]);
+    const stations = Array.from(state.radioStations.values());
+    const saved = stations.filter(item => pinned.has(item.id)).slice(-400);
+    const recent = stations.filter(item => !pinned.has(item.id)).slice(-200);
+    writeJSON(LS.radioStations, [...saved, ...recent]);
+  }
+
   function renderPlaylists() {
     const wrap = $('#playlistList');
     if (!state.playlists.length) {
@@ -1007,6 +1232,13 @@
     if (state.loading) return;
     if (state.view === 'home') renderHome();
     else if (state.view === 'channels') renderChannels();
+    else if (state.view === 'radio') {
+      renderRadio();
+      if (!state.radioLoaded && !state.radioLoading) {
+        loadRadioTags();
+        loadRadioPage(false);
+      }
+    }
     else if (state.view === 'favorites') renderFavorites();
     else if (state.view === 'history') renderHistoryView();
     else if (state.view === 'settings') renderSettings();
@@ -1025,11 +1257,11 @@
   }
 
   function setView(view) {
-    if (!['home', 'channels', 'favorites', 'history', 'settings'].includes(view)) view = 'home';
+    if (!['home', 'channels', 'radio', 'favorites', 'history', 'settings'].includes(view)) view = 'home';
     state.view = view;
     state.limit = PAGE;
     $$('.view').forEach(el => { el.hidden = el.dataset.view !== view; });
-    $$('.rail-btn[data-view], .tabbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    $$('[data-view].rail-btn, .top-nav [data-view], .tabbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
     if (view === 'channels') {
       $('#chSearch').value = state.query;
       $('#chCountry').value = state.country;
@@ -1065,6 +1297,7 @@
     if (!id) return;
     if (state.favs.has(id)) state.favs.delete(id); else state.favs.add(id);
     writeJSON(LS.favs, Array.from(state.favs));
+    if (state.radioStations.has(id)) persistRadioStations();
     const on = state.favs.has(id);
     $$('[data-fav]').forEach(b => {
       if (b.dataset.fav !== id) return;
@@ -1084,6 +1317,7 @@
   function addHistory(id) {
     state.history = [{ id, at: Date.now() }, ...state.history.filter(h => h.id !== id)].slice(0, 40);
     writeJSON(LS.history, state.history);
+    if (state.radioStations.has(id)) persistRadioStations();
     renderContinueRow();
     if (state.view === 'history') renderHistoryView();
     $('#historyCountSettings').textContent = nf(state.history.length);
@@ -1317,12 +1551,19 @@
     state.player = c;
     state.srcIndex = index;
     $('#pName').textContent = c.name;
+    const audioOnly = c.type === 'radio';
+    $('#player').classList.toggle('audio-only', audioOnly);
+    $('#radioCoverName').textContent = c.name;
+    const coverImage = $('#radioCoverImage');
+    coverImage.onerror = () => coverImage.removeAttribute('src');
+    if (c.logo) coverImage.src = c.logo;
+    else coverImage.removeAttribute('src');
     $('#pError').hidden = true;
     $('#pLoading').hidden = false;
     $('#pSourceSheet').hidden = true;
     $('#player').hidden = false;
-    video.controls = !state.tv;
-    $('#pControls').hidden = !state.tv;
+    video.controls = !state.tv && !audioOnly;
+    $('#pControls').hidden = !state.tv && !audioOnly;
     updatePlayerFav();
     updatePlayerMeta();
     updatePlayerTime();
@@ -1344,6 +1585,7 @@
     $('#pSourceSheet').hidden = true;
     $('#pError').hidden = true;
     $('#pLoading').hidden = true;
+    $('#player').classList.remove('audio-only');
     state.player = null;
     syncLock();
     if (state.view === 'home') renderContinueRow();
@@ -1638,6 +1880,16 @@
       state.limit = PAGE;
       renderChannels();
     });
+    $('#radioSearch').addEventListener('input', debounce(e => {
+      state.radioQuery = e.target.value.trim();
+      loadRadioPage(true);
+    }, 350));
+    $('#radioRetry').addEventListener('click', () => {
+      state.radioTagsLoaded = false;
+      loadRadioTags();
+      loadRadioPage(true);
+    });
+    $('#radioMore').addEventListener('click', () => loadRadioPage(false));
 
     $('#homeMore').addEventListener('click', () => { state.limit += PAGE; renderHome(); });
     $('#chMore').addEventListener('click', () => { state.limit += PAGE; renderChannels(); });
@@ -1880,10 +2132,29 @@
         return;
       }
 
+      const radioTag = e.target.closest('[data-radio-tag]');
+      if (radioTag) {
+        e.preventDefault();
+        state.radioTag = radioTag.dataset.radioTag;
+        loadRadioPage(true);
+        return;
+      }
+
+      const homeCategory = e.target.closest('[data-home-category]');
+      if (homeCategory) {
+        e.preventDefault();
+        state.cat = homeCategory.dataset.homeCategory;
+        state.query = '';
+        state.country = '';
+        state.limit = PAGE;
+        setView('channels');
+        return;
+      }
+
       const goto = e.target.closest('[data-goto]');
       if (goto) { e.preventDefault(); setView(goto.dataset.goto); return; }
 
-      const nav = e.target.closest('.rail-btn[data-view], .tabbar [data-view]');
+      const nav = e.target.closest('.rail-btn[data-view], .top-nav [data-view], .tabbar [data-view]');
       if (nav) { e.preventDefault(); setView(nav.dataset.view); return; }
 
       if (e.target.id === 'detail') { closeDetail(); return; }
@@ -1942,11 +2213,26 @@
   function init() {
     state.favs = new Set(readJSON(LS.favs, []).filter(x => typeof x === 'string'));
     state.history = readJSON(LS.history, []).filter(h => h && typeof h.id === 'string').slice(0, 40);
+    const cachedRadio = readJSON(LS.radioStations, []);
+    if (Array.isArray(cachedRadio)) {
+      cachedRadio.forEach(channel => {
+        if (!channel || typeof channel.id !== 'string' || !channel.id.startsWith('radio:') || channel.type !== 'radio' ||
+          !Array.isArray(channel.urls) || !safeHttp(channel.urls[0])) return;
+        state.radioStations.set(channel.id, Object.assign({}, channel, {
+          name: String(channel.name || t('channel.unnamed')),
+          logo: safeHttp(channel.logo || ''),
+          urls: [safeHttp(channel.urls[0])],
+          cats: Array.isArray(channel.cats) ? channel.cats : ['radio'],
+          langs: Array.isArray(channel.langs) ? channel.langs : []
+        }));
+      });
+    }
+    state.radioItems = Array.from(state.radioStations.values()).slice(-RADIO_PAGE);
     bindEvents();
     applyLanguage();
     state.loading = true;
     renderSkeletons();
-    $$('.rail-btn[data-view], .tabbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'home'));
+    $$('[data-view].rail-btn, .top-nav [data-view], .tabbar [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === 'home'));
     renderSettings();
     setupThemeWatch();
     if (!prefs.onboarded) openOnboard();
