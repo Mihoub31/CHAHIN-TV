@@ -25,12 +25,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick
           mkdir -p app/src/main/assets
-          cp index.html app/src/main/assets/index.html
+          cp index.html tv.html sw.js icon.svg icon-192.png icon-512.png manifest.webmanifest manifest-tv.webmanifest app/src/main/assets/
+          cp -r assets app/src/main/assets/assets
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             n=${d%%:*}; s=${d##*:}
             mkdir -p app/src/main/res/mipmap-$n
             convert icon-512.png -resize ${s}x${s} app/src/main/res/mipmap-$n/ic_launcher.png
           done
+          mkdir -p app/src/main/res/drawable
+          convert icon-512.png -resize 320x180 -background '#040b12' -gravity center -extent 320x180 -flatten app/src/main/res/drawable/tv_banner.png
       - name: Build
         run: gradle assembleDebug --no-daemon
       - name: Rename APK

@@ -1,0 +1,6 @@
+.ref/
+.gradle/
+app/build/
+app/src/main/assets/
+local.properties
+*.apk
