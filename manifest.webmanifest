@@ -1,7 +1,7 @@
 {
   "name": "CHAHIN TV",
   "short_name": "CHAHIN TV",
-  "description": "CHAHIN TV : regardez des chaînes de télévision IPTV du monde entier, avec recherche par pays et catégorie, favoris, historique et playlists M3U personnelles.",
+  "description": "CHAHIN TV : chaînes et radios du monde entier, découverte de films, séries et animé, recherche, favoris et playlists M3U personnelles.",
   "lang": "fr",
   "start_url": "./index.html",
   "scope": "./",

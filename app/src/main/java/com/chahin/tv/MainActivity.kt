@@ -160,7 +160,7 @@ class MainActivity : Activity() {
                     connection.connectTimeout = 15000
                     connection.readTimeout = 30000
                     connection.instanceFollowRedirects = true
-                    connection.setRequestProperty("User-Agent", "CHAHIN-TV/2.2")
+                    connection.setRequestProperty("User-Agent", "CHAHIN-TV/2.3")
                     connection.setRequestProperty("Accept", "*/*")
                     val code = connection.responseCode
                     if (code !in 200..299) {

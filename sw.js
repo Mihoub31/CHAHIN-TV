@@ -1,11 +1,11 @@
-const C = 'chahin-tv-v14';
+const C = 'chahin-tv-v15';
 const SHELL = [
   './',
   './index.html',
   './tv.html',
-  './assets/app.css?v=2.2.2',
-  './assets/i18n.js?v=2.2.2',
-  './assets/app.js?v=2.2.2',
+  './assets/app.css?v=2.3.0',
+  './assets/i18n.js?v=2.3.0',
+  './assets/app.js?v=2.3.0',
   './assets/vendor/hls.min.js',
   './icon.svg',
   './icon-192.png',
