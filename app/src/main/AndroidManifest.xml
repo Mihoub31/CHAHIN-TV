@@ -9,6 +9,7 @@
     <application
         android:label="CHAHIN TV"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"

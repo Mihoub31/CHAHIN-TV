@@ -6,7 +6,7 @@
   const FREE_TV_M3U = 'https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8';
   const TMDB_API = 'https://api.themoviedb.org/3/';
   const TMDB_IMAGE = 'https://image.tmdb.org/t/p/w342';
-  const VERSION = '2.3';
+  const VERSION = '2.4';
   const PAGE = 36;
   const RADIO_PAGE = 36;
   const LS = { favs: 'ctv:favs', history: 'ctv:history', playlists: 'ctv:playlists', prefs: 'ctv:prefs', radioStations: 'ctv:radioStations' };
